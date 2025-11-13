@@ -27,7 +27,7 @@ impl Registers {
     }
 }
 
-#[derive(Default,PartialEq, Debug)]
+#[derive(Default, PartialEq, Debug)]
 struct FlagsRegister {
     zero: bool,
     subtract: bool,
@@ -70,6 +70,28 @@ enum Instruction {
     ADD(ArithmeticTarget),
 }
 
+impl Instruction {
+    fn from_byte(byte: u8, prefixed: bool) -> Option<Instruction> {
+        if prefixed {
+            Instruction::from_byte_prefixed(byte)
+        } else {
+            Instruction::from_byte_not_prefixed(byte)
+        }
+    }
+
+    fn from_byte_prefixed(byte: u8) -> Option<Instruction> {
+        match byte {
+            _ => None,
+        }
+    }
+
+    fn from_byte_not_prefixed(byte: u8) -> Option<Instruction> {
+        match byte {
+            _ => None,
+        }
+    }
+}
+
 enum ArithmeticTarget {
     A,
     B,
@@ -83,23 +105,26 @@ enum ArithmeticTarget {
 #[derive(Default)]
 struct CPU {
     registers: Registers,
+    pc: u16,
+    bus: MemoryBus,
 }
 
 impl CPU {
-    fn execute(&mut self, instruction: Instruction) {
+    fn execute(&mut self, instruction: Instruction) -> u16 {
         match instruction {
             Instruction::ADD(target) => match target {
-                ArithmeticTarget::A => {}
-                ArithmeticTarget::B => {}
+                ArithmeticTarget::A => self.pc,
+                ArithmeticTarget::B => self.pc,
                 ArithmeticTarget::C => {
                     let value = self.registers.c;
                     let new_value = self.add(value);
                     self.registers.a = new_value;
+                    self.pc.wrapping_add(1)
                 }
-                ArithmeticTarget::D => {}
-                ArithmeticTarget::E => {}
-                ArithmeticTarget::H => {}
-                ArithmeticTarget::L => {}
+                ArithmeticTarget::D => self.pc,
+                ArithmeticTarget::E => self.pc,
+                ArithmeticTarget::H => self.pc,
+                ArithmeticTarget::L => self.pc,
             },
         }
     }
@@ -115,6 +140,40 @@ impl CPU {
         // 上位ニブルをマスクして0xFと論理和を取り、0xFを超えたらtrue
         self.registers.f.half_carry = (self.registers.a & 0xF) + (value & 0xF) > 0xF;
         new_value
+    }
+
+    fn step(&mut self) {
+        let mut instruction_byte = self.bus.read_byte(self.pc);
+        let prefixed = instruction_byte == 0xCB;
+        if prefixed {
+            instruction_byte = self.bus.read_byte(self.pc + 1);
+        }
+        let next_pc = if let Some(instruction) = Instruction::from_byte(instruction_byte, prefixed) {
+            self.execute(instruction)
+        } else {
+            let description = format!("0x{}{:02X}", if prefixed { "CB" } else { "" }, instruction_byte);
+            panic!("Unkown instruction found for: {}", description)
+        };
+
+        self.pc = next_pc;
+    }
+}
+
+struct MemoryBus {
+    memory: [u8; 0xFFFF],
+}
+
+impl MemoryBus {
+    fn read_byte(&self, address: u16) -> u8 {
+        self.memory[address as usize]
+    }
+}
+
+impl Default for MemoryBus {
+    fn default() -> Self {
+        Self {
+            memory: [0; 0xFFFF],
+        }
     }
 }
 
@@ -191,6 +250,23 @@ mod tests {
         cpu.registers.c = 0x01;
         cpu.execute(Instruction::ADD(ArithmeticTarget::C));
         assert_eq!(cpu.registers.a, 0x10);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unkown instruction found for: 0x00")]
+    fn test_step_non_prefixed_unknown_instruction() {
+        let mut cpu = CPU::default();
+        cpu.bus.memory[0] = 0x00; // 未知の非プレフィックス命令
+        cpu.step();
+    }
+
+    #[test]
+    #[should_panic(expected = "Unkown instruction found for: 0xCB00")]
+    fn test_step_prefixed_unknown_instruction() {
+        let mut cpu = CPU::default();
+        cpu.bus.memory[0] = 0xCB;
+        cpu.bus.memory[1] = 0x00; // 未知のプレフィックス命令
+        cpu.step();
     }
 }
 
