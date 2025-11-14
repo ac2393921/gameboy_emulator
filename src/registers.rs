@@ -25,6 +25,15 @@ impl Registers {
         self.b = ((value & 0xFF00) >> 8) as u8;
         self.c = (value & 0xFF) as u8;
     }
+
+    pub fn get_hl(&self) -> u16 {
+        (self.h as u16) << 8 | self.l as u16
+    }
+
+    pub fn set_hl(&mut self, value: u16) {
+        self.h = ((value & 0xFF00) >> 8) as u8;
+        self.l = (value & 0xFF) as u8;
+    }
 }
 
 #[derive(Default, PartialEq, Debug)]
@@ -83,6 +92,22 @@ mod tests {
         registers.set_bc(0x1A3C);
         assert_eq!(registers.b, 0x1A);
         assert_eq!(registers.c, 0x3C);
+    }
+
+    #[test]
+    fn test_get_hl() {
+        let mut registers = Registers::default();
+        registers.h = 0x2B;
+        registers.l = 0x4D;
+        assert_eq!(registers.get_hl(), 0x2B4D);
+    }
+
+    #[test]
+    fn test_set_hl() {
+        let mut registers = Registers::default();
+        registers.set_hl(0x2B4D);
+        assert_eq!(registers.h, 0x2B);
+        assert_eq!(registers.l, 0x4D);
     }
 
     #[test]

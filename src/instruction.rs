@@ -2,6 +2,7 @@
 pub enum Instruction {
     ADD(ArithmeticTarget),
     JP(JumpTest),
+    LD(LoadType),
 }
 
 impl Instruction {
@@ -42,4 +43,31 @@ pub enum JumpTest {
     NotCarry,
     Carry,
     Always,
+}
+
+pub enum LoadByteTarget {
+    A,
+    B,
+    C,
+    D,
+    E,
+    H,
+    L,
+    HLI,
+}
+
+pub enum LoadByteSource {
+    A,
+    B,
+    C,
+    D,
+    E,
+    H,
+    L,
+    D8,
+    HLI,
+}
+
+pub enum LoadType {
+    Byte(LoadByteTarget, LoadByteSource),
 }
