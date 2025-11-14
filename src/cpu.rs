@@ -8,6 +8,7 @@ use crate::registers::Registers;
 pub struct CPU {
     pub registers: Registers,
     pub pc: u16,
+    pub sp: u16,
     pub bus: MemoryBus,
 }
 
@@ -132,6 +133,26 @@ impl CPU {
         };
 
         self.pc = next_pc;
+    }
+
+    fn push(&mut self, value: u16) {
+        // 最上位バイトをスタックにプッシュ
+        self.sp = self.sp.wrapping_sub(1);
+        self.bus.write_byte(self.sp, ((value & 0xFF00) >> 8) as u8);
+
+        // 最下位バイトをスタックにプッシュ
+        self.sp = self.sp.wrapping_sub(1);
+        self.bus.write_byte(self.sp, (value & 0xFF) as u8);
+    }
+
+    fn pop(&mut self) -> u16 {
+        let lsb = self.bus.read_byte(self.sp) as u16;
+        self.sp = self.sp.wrapping_add(1);
+
+        let msb = self.bus.read_byte(self.sp) as u16;
+        self.sp = self.sp.wrapping_add(1);
+
+        (msb << 8) | lsb
     }
 }
 
@@ -314,5 +335,76 @@ mod tests {
         ));
         assert_eq!(cpu.registers.b, 0x34);
         assert_eq!(next_pc, 0x0502);
+    }
+
+    // push/popのテスト: 基本的なpushとpop
+    #[test]
+    fn test_push_pop() {
+        let mut cpu = CPU::default();
+        cpu.sp = 0xFFFE; // スタックポインタの初期値
+        let original_value = 0x1234;
+
+        cpu.push(original_value);
+        assert_eq!(cpu.sp, 0xFFFC); // 2バイト減っている
+
+        let popped_value = cpu.pop();
+        assert_eq!(popped_value, original_value);
+        assert_eq!(cpu.sp, 0xFFFE); // 元の位置に戻る
+    }
+
+    // push/popのテスト: 複数回のpush/pop
+    #[test]
+    fn test_push_pop_multiple() {
+        let mut cpu = CPU::default();
+        cpu.sp = 0xFFFE;
+
+        cpu.push(0x1111);
+        assert_eq!(cpu.sp, 0xFFFC);
+
+        cpu.push(0x2222);
+        assert_eq!(cpu.sp, 0xFFFA);
+
+        cpu.push(0x3333);
+        assert_eq!(cpu.sp, 0xFFF8);
+
+        // 逆順にpopされる
+        assert_eq!(cpu.pop(), 0x3333);
+        assert_eq!(cpu.sp, 0xFFFA);
+
+        assert_eq!(cpu.pop(), 0x2222);
+        assert_eq!(cpu.sp, 0xFFFC);
+
+        assert_eq!(cpu.pop(), 0x1111);
+        assert_eq!(cpu.sp, 0xFFFE);
+    }
+
+    // push/popのテスト: メモリに正しく書き込まれているか
+    #[test]
+    fn test_push_memory_contents() {
+        let mut cpu = CPU::default();
+        cpu.sp = 0xFFFE;
+        let value = 0xABCD;
+
+        cpu.push(value);
+
+        // little endianで保存される
+        // 最下位バイトが先（sp）、最上位バイトが後（sp+1）
+        assert_eq!(cpu.bus.memory[0xFFFC], 0xCD); // 最下位バイト
+        assert_eq!(cpu.bus.memory[0xFFFD], 0xAB); // 最上位バイト
+    }
+
+    // push/popのテスト: 境界値（0x0000と0xFFFF）
+    #[test]
+    fn test_push_pop_boundary_values() {
+        let mut cpu = CPU::default();
+        cpu.sp = 0xFFFE;
+
+        // 最小値
+        cpu.push(0x0000);
+        assert_eq!(cpu.pop(), 0x0000);
+
+        // 最大値
+        cpu.push(0xFFFF);
+        assert_eq!(cpu.pop(), 0xFFFF);
     }
 }
