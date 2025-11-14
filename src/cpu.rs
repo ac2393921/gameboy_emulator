@@ -79,6 +79,20 @@ impl CPU {
         byte
     }
 
+    fn read_next_word(&mut self) -> u16 {
+        // little endianで16ビット値を読み込む
+        // 最下位バイトを先に読み込む
+        let lsb = self.bus.read_byte(self.pc) as u16;
+        self.pc = self.pc.wrapping_add(1);
+        
+        // 最上位バイトを読み込む
+        let msb = self.bus.read_byte(self.pc) as u16;
+        self.pc = self.pc.wrapping_add(1);
+        
+        // 16ビット値として組み合わせる
+        (msb << 8) | lsb
+    }
+
     fn add(&mut self, value: u8) -> u8 {
         let (new_value, did_overflow) = self.registers.a.overflowing_add(value);
         self.registers.f.zero = new_value == 0;
@@ -153,6 +167,26 @@ impl CPU {
         self.sp = self.sp.wrapping_add(1);
 
         (msb << 8) | lsb
+    }
+
+    fn call(&mut self, should_jump: bool) -> u16 {
+        let next_pc = self.pc.wrapping_add(3);
+        if should_jump {
+            // 次のプログラムカウンタをストックにコピー
+            self.push(next_pc);
+            // 次の２バイトのメモリで指定されたアドレスに移動
+            self.read_next_word()
+        } else {
+            next_pc
+        }
+    }
+
+    fn return_(&mut self, should_jump: bool) -> u16 {
+        if should_jump {
+            self.pop()
+        } else {
+            self.pc.wrapping_add(1)
+        }
     }
 }
 
@@ -406,5 +440,99 @@ mod tests {
         // 最大値
         cpu.push(0xFFFF);
         assert_eq!(cpu.pop(), 0xFFFF);
+    }
+
+    // callのテスト: ジャンプする場合
+    #[test]
+    fn test_call_jump() {
+        let mut cpu = CPU::default();
+        cpu.pc = 0x0100;
+        cpu.sp = 0xFFFE;
+        
+        // ジャンプ先のアドレスをメモリに設定（little endian）
+        cpu.bus.memory[0x0100] = 0x34; // 最下位バイト
+        cpu.bus.memory[0x0101] = 0x12; // 最上位バイト
+        
+        let next_pc = cpu.call(true);
+        
+        // ジャンプ先のアドレスに移動している
+        assert_eq!(next_pc, 0x1234);
+        
+        // スタックにnext_pc（0x0103）がプッシュされている
+        assert_eq!(cpu.sp, 0xFFFC);
+        let return_address = cpu.pop();
+        assert_eq!(return_address, 0x0103);
+    }
+
+    // callのテスト: ジャンプしない場合
+    #[test]
+    fn test_call_no_jump() {
+        let mut cpu = CPU::default();
+        cpu.pc = 0x0200;
+        cpu.sp = 0xFFFE;
+        
+        let next_pc = cpu.call(false);
+        
+        // ジャンプせず、next_pc（0x0203）を返す
+        assert_eq!(next_pc, 0x0203);
+        
+        // スタックは変更されていない
+        assert_eq!(cpu.sp, 0xFFFE);
+    }
+
+    // return_のテスト: ジャンプする場合
+    #[test]
+    fn test_return_jump() {
+        let mut cpu = CPU::default();
+        cpu.pc = 0x0300;
+        cpu.sp = 0xFFFE;
+        
+        // スタックに戻り先アドレスをプッシュ
+        let return_address = 0x1234;
+        cpu.push(return_address);
+        
+        let next_pc = cpu.return_(true);
+        
+        // スタックからポップしたアドレスに戻る
+        assert_eq!(next_pc, return_address);
+        
+        // スタックポインタが戻っている
+        assert_eq!(cpu.sp, 0xFFFE);
+    }
+
+    // return_のテスト: ジャンプしない場合
+    #[test]
+    fn test_return_no_jump() {
+        let mut cpu = CPU::default();
+        cpu.pc = 0x0400;
+        cpu.sp = 0xFFFE;
+        
+        let next_pc = cpu.return_(false);
+        
+        // ジャンプせず、pc + 1を返す
+        assert_eq!(next_pc, 0x0401);
+        
+        // スタックは変更されていない
+        assert_eq!(cpu.sp, 0xFFFE);
+    }
+
+    // callとreturn_の組み合わせテスト
+    #[test]
+    fn test_call_return_combination() {
+        let mut cpu = CPU::default();
+        cpu.pc = 0x0500;
+        cpu.sp = 0xFFFE;
+        
+        // callでジャンプ
+        cpu.bus.memory[0x0500] = 0x78; // 最下位バイト
+        cpu.bus.memory[0x0501] = 0x56; // 最上位バイト
+        let call_pc = cpu.call(true);
+        assert_eq!(call_pc, 0x5678);
+        assert_eq!(cpu.sp, 0xFFFC);
+        
+        // return_で戻る
+        let return_pc = cpu.return_(true);
+        assert_eq!(return_pc, 0x0503); // callの次のアドレス
+        assert_eq!(cpu.sp, 0xFFFE);
     }
 }
