@@ -3,6 +3,8 @@ pub enum Instruction {
     ADD(ArithmeticTarget),
     JP(JumpTest),
     LD(LoadType),
+    CALL(JumpTest),
+    RET(JumpTest),
 }
 
 impl Instruction {

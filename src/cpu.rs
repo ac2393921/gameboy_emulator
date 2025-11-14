@@ -70,27 +70,31 @@ impl CPU {
                     }
                 }
             },
+            Instruction::CALL(test) => {
+                let jump_condition = match test {
+                    JumpTest::NotZero => !self.registers.f.zero,
+                    _ => { panic!("TODO: support more conditions") }
+                };
+                self.call(jump_condition)
+            },
+            Instruction::RET(test) => {
+                let jump_condition = match test {
+                    JumpTest::NotZero => !self.registers.f.zero,
+                    _ => { panic!("TODO: support more conditions") }
+                };
+                self.return_(jump_condition)
+            }
         }
     }
 
     fn read_next_byte(&mut self) -> u8 {
-        let byte = self.bus.read_byte(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-        byte
+        self.bus.read_byte(self.pc + 1)
     }
 
     fn read_next_word(&mut self) -> u16 {
-        // little endianで16ビット値を読み込む
-        // 最下位バイトを先に読み込む
-        let lsb = self.bus.read_byte(self.pc) as u16;
-        self.pc = self.pc.wrapping_add(1);
-        
-        // 最上位バイトを読み込む
-        let msb = self.bus.read_byte(self.pc) as u16;
-        self.pc = self.pc.wrapping_add(1);
-        
-        // 16ビット値として組み合わせる
-        (msb << 8) | lsb
+        let lsb = self.bus.read_byte(self.pc + 1) as u16;
+        let msb = self.bus.read_byte(self.pc + 2) as u16;
+        return (msb << 8) | lsb;
     }
 
     fn add(&mut self, value: u8) -> u8 {
@@ -310,17 +314,18 @@ mod tests {
     }
 
     // LD命令のテスト: 即値（D8）からレジスタへのロード
-    // #[test]
-    // fn test_ld_immediate_to_register() {
-    //     let mut cpu = CPU::default();
-    //     cpu.pc = 0x0200;
-    //     cpu.bus.memory[0x0200] = 0xAB; // D8の値
-    //     let next_pc = cpu.execute(Instruction::LD(
-    //         LoadType::Byte(LoadByteTarget::C, LoadByteSource::D8),
-    //     ));
-    //     assert_eq!(cpu.registers.c, 0xAB);
-    //     assert_eq!(next_pc, 0x0202); // D8の場合は2バイト進む
-    // }
+    #[test]
+    fn test_ld_immediate_to_register() {
+        let mut cpu = CPU::default();
+        cpu.pc = 0x0200;
+        // read_next_byteはself.pc + 1から読み込む
+        cpu.bus.memory[0x0201] = 0xAB; // D8の値
+        let next_pc = cpu.execute(Instruction::LD(
+            LoadType::Byte(LoadByteTarget::C, LoadByteSource::D8),
+        ));
+        assert_eq!(cpu.registers.c, 0xAB);
+        assert_eq!(next_pc, 0x0202); // D8の場合は2バイト進む
+    }
 
     // LD命令のテスト: メモリ（HLI）からレジスタへのロード
     #[test]
@@ -450,8 +455,9 @@ mod tests {
         cpu.sp = 0xFFFE;
         
         // ジャンプ先のアドレスをメモリに設定（little endian）
-        cpu.bus.memory[0x0100] = 0x34; // 最下位バイト
-        cpu.bus.memory[0x0101] = 0x12; // 最上位バイト
+        // read_next_wordはself.pc + 1とself.pc + 2から読み込む
+        cpu.bus.memory[0x0101] = 0x34; // 最下位バイト
+        cpu.bus.memory[0x0102] = 0x12; // 最上位バイト
         
         let next_pc = cpu.call(true);
         
@@ -524,8 +530,9 @@ mod tests {
         cpu.sp = 0xFFFE;
         
         // callでジャンプ
-        cpu.bus.memory[0x0500] = 0x78; // 最下位バイト
-        cpu.bus.memory[0x0501] = 0x56; // 最上位バイト
+        // read_next_wordはself.pc + 1とself.pc + 2から読み込む
+        cpu.bus.memory[0x0501] = 0x78; // 最下位バイト
+        cpu.bus.memory[0x0502] = 0x56; // 最上位バイト
         let call_pc = cpu.call(true);
         assert_eq!(call_pc, 0x5678);
         assert_eq!(cpu.sp, 0xFFFC);
@@ -533,6 +540,71 @@ mod tests {
         // return_で戻る
         let return_pc = cpu.return_(true);
         assert_eq!(return_pc, 0x0503); // callの次のアドレス
+        assert_eq!(cpu.sp, 0xFFFE);
+    }
+
+    // CALL命令のテスト: ジャンプする場合
+    #[test]
+    fn test_instruction_call_jump() {
+        let mut cpu = CPU::default();
+        cpu.pc = 0x0600;
+        cpu.sp = 0xFFFE;
+        cpu.registers.f.zero = false; // NotZero条件がtrueになる
+        
+        // ジャンプ先のアドレスをメモリに設定
+        cpu.bus.memory[0x0601] = 0xCD; // 最下位バイト
+        cpu.bus.memory[0x0602] = 0xAB; // 最上位バイト
+        
+        let next_pc = cpu.execute(Instruction::CALL(JumpTest::NotZero));
+        
+        assert_eq!(next_pc, 0xABCD);
+        assert_eq!(cpu.sp, 0xFFFC);
+        let return_address = cpu.pop();
+        assert_eq!(return_address, 0x0603);
+    }
+
+    // CALL命令のテスト: ジャンプしない場合
+    #[test]
+    fn test_instruction_call_no_jump() {
+        let mut cpu = CPU::default();
+        cpu.pc = 0x0700;
+        cpu.sp = 0xFFFE;
+        cpu.registers.f.zero = true; // NotZero条件がfalseになる
+        
+        let next_pc = cpu.execute(Instruction::CALL(JumpTest::NotZero));
+        
+        assert_eq!(next_pc, 0x0703);
+        assert_eq!(cpu.sp, 0xFFFE);
+    }
+
+    // RET命令のテスト: ジャンプする場合
+    #[test]
+    fn test_instruction_ret_jump() {
+        let mut cpu = CPU::default();
+        cpu.pc = 0x0800;
+        cpu.sp = 0xFFFE;
+        cpu.registers.f.zero = false; // NotZero条件がtrueになる
+        
+        let return_address = 0x1234;
+        cpu.push(return_address);
+        
+        let next_pc = cpu.execute(Instruction::RET(JumpTest::NotZero));
+        
+        assert_eq!(next_pc, return_address);
+        assert_eq!(cpu.sp, 0xFFFE);
+    }
+
+    // RET命令のテスト: ジャンプしない場合
+    #[test]
+    fn test_instruction_ret_no_jump() {
+        let mut cpu = CPU::default();
+        cpu.pc = 0x0900;
+        cpu.sp = 0xFFFE;
+        cpu.registers.f.zero = true; // NotZero条件がfalseになる
+        
+        let next_pc = cpu.execute(Instruction::RET(JumpTest::NotZero));
+        
+        assert_eq!(next_pc, 0x0901);
         assert_eq!(cpu.sp, 0xFFFE);
     }
 }
